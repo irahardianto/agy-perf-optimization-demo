@@ -1,0 +1,155 @@
+From f377ccfa5f750e5326d447df60bf178a67887c65 Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:14:53 +0000
+Subject: [PATCH 5/6] perf(pricing): batch stock lookups and fetch the loyalty
+ tier concurrently
+
+What: priceCart fetches stock with getStockBatch (one round trip per 100 SKUs) in parallel with
+loyalty.getTier; the shipping quote still waits for stock.
+Why: every cart line made its own sequential inventory round trip (~3 ms each), followed by
+sequential shipping (~12 ms) and loyalty (~8 ms) calls: ~45 ms of pure waiting for an 8-line
+cart (N+1 calls to the warehouse service).
+Impact: cart I/O wait drops from 3 ms x lines + 20 ms to ~max(3 ms, 8 ms) + 12 ms regardless of
+cart size. Shipping keeps quoting only the in-stock weight, so it can't join the parallel group.
+Measurement: npm run bench -- --scenario cart, compare p50/p95 against fix4
+---
+ src/pricing/cart-pricer.js | 45 ++++++++++++++++++++++++----------
+ test/cart-pricer.test.js   | 50 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+), 13 deletions(-)
+
+diff --git a/src/pricing/cart-pricer.js b/src/pricing/cart-pricer.js
+index 62f3453..e198cd6 100644
+--- a/src/pricing/cart-pricer.js
++++ b/src/pricing/cart-pricer.js
+@@ -1,3 +1,4 @@
++import { MAX_BATCH_SIZE } from '../external/inventory-client.js';
+ import { findBestPromotion } from './promotions.js';
+ 
+ /** Loyalty discount (basis points) applied to the merchandise total after promotions. */
+@@ -5,6 +6,19 @@ export const LOYALTY_DISCOUNT_BPS = Object.freeze({ gold: 200, silver: 100, stan
+ 
+ const sumOf = (lines, pick) => lines.reduce((total, line) => total + pick(line), 0);
+ 
++/** Stock levels for the SKUs, in one getStockBatch round trip per MAX_BATCH_SIZE SKUs. */
++async function fetchStock(inventory, skus) {
++  const batches = [];
++  for (let start = 0; start < skus.length; start += MAX_BATCH_SIZE) {
++    batches.push(inventory.getStockBatch(skus.slice(start, start + MAX_BATCH_SIZE)));
++  }
++  const stock = new Map();
++  for (const batch of await Promise.all(batches)) {
++    for (const [sku, units] of batch) stock.set(sku, units);
++  }
++  return stock;
++}
++
+ function unavailableLine(item) {
+   return {
+     sku: item.sku,
+@@ -61,26 +75,31 @@ export function createCartPricer({ catalog, inventory, shipping, loyalty, logger
+     const now = clock();
+     const { products, promotions } = catalog.getSnapshot();
+ 
+-    const lines = [];
+-    for (const item of cart.items) {
+-      const found = products.find((product) => product.sku === item.sku);
+-      if (!found) {
+-        lines.push(unavailableLine(item));
+-        continue;
+-      }
++    // PERF: pricing made one inventory round trip per line (~3 ms each, strictly sequential) and
++    // then waited for shipping (~12 ms) and loyalty (~8 ms) one after the other, so an 8-line
++    // cart spent ~45 ms waiting on I/O. Stock now comes from getStockBatch (one round trip per
++    // 100 SKUs), concurrently with the loyalty lookup, which doesn't depend on stock. Shipping
++    // still waits for stock: only in-stock lines are shipped, so their weight must be known.
++    const found = cart.items.map((item) => products.find((product) => product.sku === item.sku));
++    const knownSkus = found.filter(Boolean).map((product) => product.sku);
++    const [stock, customerTier] = await Promise.all([
++      fetchStock(inventory, knownSkus),
++      loyalty.getTier(cart.customerId),
++    ]);
++
++    const lines = cart.items.map((item, i) => {
++      if (!found[i]) return unavailableLine(item);
+       // Price a private copy so this request can never modify shared catalog data.
+-      const product = JSON.parse(JSON.stringify(found));
+-      const available = await inventory.getStock(product.sku);
+-      const line = priceLine(product, item.quantity, available, promotions, now);
++      const product = JSON.parse(JSON.stringify(found[i]));
++      const line = priceLine(product, item.quantity, stock.get(product.sku) ?? 0, promotions, now);
+       logger.debug(`priced line ${JSON.stringify(line)} for product ${JSON.stringify(product)}`);
+-      lines.push(line);
+-    }
++      return line;
++    });
+ 
+     // Only lines we can actually fulfil are shipped and charged.
+     const shippable = lines.filter((line) => line.status === 'ok');
+     const weightGrams = sumOf(shippable, (line) => line.weightGrams * line.quantity);
+     const quote = shippable.length > 0 ? await shipping.quote(cart.destination, weightGrams) : null;
+-    const customerTier = await loyalty.getTier(cart.customerId);
+ 
+     const merchandiseSubtotalCents = sumOf(shippable, (line) => line.unitPriceCents * line.quantity);
+     const promotionDiscountCents = sumOf(shippable, (line) => line.discountCents);
+diff --git a/test/cart-pricer.test.js b/test/cart-pricer.test.js
+index 8ffe240..0d915c2 100644
+--- a/test/cart-pricer.test.js
++++ b/test/cart-pricer.test.js
+@@ -149,4 +149,54 @@ describe('priceCart', () => {
+     }
+     assert.equal(JSON.stringify(snapshot), pristine);
+   });
++
++  describe('external calls', () => {
++    const pricerWith = ({ inventory, loyalty = fakes().loyalty, snapshot = catalogSnapshot() }) => createCartPricer({
++      catalog: { getSnapshot: () => snapshot },
++      inventory,
++      shipping: fakes().shipping,
++      loyalty,
++      logger: createLogger({ level: 'silent' }),
++      clock: () => new Date('2026-11-11T11:11:00.000Z'),
++    });
++
++    test('fetches stock for the whole cart in one batched inventory call', async () => {
++      const batches = [];
++      let singleCalls = 0;
++      const priceCart = pricerWith({
++        inventory: {
++          async getStock() { singleCalls += 1; return 10; },
++          async getStockBatch(skus) { batches.push(skus); return new Map(skus.map((sku) => [sku, 10])); },
++        },
++      });
++      const summary = await priceCart(cart([{ sku: 'FM-000001', quantity: 1 }, { sku: 'FM-999999', quantity: 1 }, { sku: 'FM-000003', quantity: 2 }]));
++      assert.equal(singleCalls, 0);
++      assert.deepEqual(batches, [['FM-000001', 'FM-000003']]);
++      assert.deepEqual(summary.lines.map((line) => line.status), ['ok', 'not_found', 'ok']);
++    });
++
++    test('splits stock lookups into batches the inventory service accepts', async () => {
++      const products = Array.from({ length: 150 }, (_, i) => ({ sku: `FM-${String(i + 1).padStart(6, '0')}`, name: `Item ${i + 1}`, priceCents: 100, weightGrams: 10 }));
++      const sizes = [];
++      const priceCart = pricerWith({
++        snapshot: { products, promotions: [] },
++        inventory: { async getStockBatch(skus) { sizes.push(skus.length); return new Map(skus.map((sku) => [sku, 5])); } },
++      });
++      const summary = await priceCart(cart(products.map(({ sku }) => ({ sku, quantity: 1 }))));
++      assert.deepEqual(sizes, [100, 50]);
++      assert.equal(summary.lines.filter((line) => line.status === 'ok').length, 150);
++    });
++
++    test('looks up the loyalty tier while stock is being fetched', { timeout: 2_000 }, async () => {
++      let markTierRequested;
++      const tierRequested = new Promise((resolve) => { markTierRequested = resolve; });
++      const priceCart = pricerWith({
++        // Stock only arrives once the tier lookup has started, so a sequential implementation times out.
++        inventory: { async getStockBatch(skus) { await tierRequested; return new Map(skus.map((sku) => [sku, 10])); } },
++        loyalty: { async getTier() { markTierRequested(); return 'silver'; } },
++      });
++      const summary = await priceCart(cart([{ sku: 'FM-000001', quantity: 1 }]));
++      assert.equal(summary.customerTier, 'silver');
++    });
++  });
+ });
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

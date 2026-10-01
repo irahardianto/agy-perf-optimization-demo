@@ -1,0 +1,160 @@
+From 466f5065c69d91b4078717c52b30acaa48d41cac Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:09:30 +0000
+Subject: [PATCH 2/6] perf(search): build an inverted index once per catalog
+ snapshot
+
+What: searchIndexFor(products) builds token -> (product position -> field weight) postings
+once per snapshot, cached in a WeakMap keyed by the products array; keyword queries sum the
+postings of their terms instead of tokenizing and scanning every product.
+Why: the baseline profile showed tokenize() at ~17% of busy time and ~30% of all allocations:
+every search re-tokenized all 12,000 products (~65 ms of CPU per request).
+Impact: keyword search cost scales with the number of matching products instead of the
+catalog size; results are byte-identical (400-query differential check against the baseline).
+A new snapshot gets a fresh index on its first search (1 s freshness requirement holds).
+Measurement: npm run bench -- --scenario search, compare against fix1
+---
+ src/catalog/search.js | 78 +++++++++++++++++++++++++++++++++----------
+ test/search.test.js   | 19 ++++++++++-
+ 2 files changed, 78 insertions(+), 19 deletions(-)
+
+diff --git a/src/catalog/search.js b/src/catalog/search.js
+index ce3447d..7eeb52f 100644
+--- a/src/catalog/search.js
++++ b/src/catalog/search.js
+@@ -16,20 +16,54 @@ export function tokenize(text) {
+     .filter(Boolean);
+ }
+ 
+-function scoreProduct(product, terms) {
+-  const nameTokens = tokenize(product.name);
+-  const brandTokens = tokenize(product.brand);
+-  const tagTokens = product.tags.flatMap(tokenize);
+-  const descriptionTokens = tokenize(product.description);
++// PERF: the baseline profile showed tokenize() at ~17% of busy time and ~30% of all allocations:
++// every search re-tokenized the name, brand, tags and description of all 12,000 products. Each
++// snapshot now gets an inverted index (token -> product position -> summed field weight), built
++// once, so a query only touches the products that contain its terms. The index is keyed by the
++// snapshot's products array: a newly published snapshot gets a fresh index on its first search,
++// and an old index is garbage-collected together with its snapshot.
++const searchIndexes = new WeakMap();
+ 
+-  let score = 0;
++/**
++ * Inverted index of a snapshot: token -> Map(position in `products` -> relevance weight).
++ * Built on first use and reused for as long as the same products array is served.
++ * @param {object[]} products
++ * @returns {Map<string, Map<number, number>>}
++ */
++export function searchIndexFor(products) {
++  let index = searchIndexes.get(products);
++  if (index === undefined) {
++    index = new Map();
++    const addField = (position, tokens, weight) => {
++      for (const token of new Set(tokens)) {
++        let postings = index.get(token);
++        if (postings === undefined) {
++          postings = new Map();
++          index.set(token, postings);
++        }
++        postings.set(position, (postings.get(position) ?? 0) + weight);
++      }
++    };
++    products.forEach((product, position) => {
++      addField(position, tokenize(product.name), WEIGHTS.name);
++      addField(position, tokenize(product.brand), WEIGHTS.brand);
++      addField(position, product.tags.flatMap(tokenize), WEIGHTS.tags);
++      addField(position, tokenize(product.description), WEIGHTS.description);
++    });
++    searchIndexes.set(products, index);
++  }
++  return index;
++}
++
++/** Relevance score per product position; products that match no term are absent. */
++function scoreMatches(index, terms) {
++  const scores = new Map();
+   for (const term of terms) {
+-    if (nameTokens.includes(term)) score += WEIGHTS.name;
+-    if (brandTokens.includes(term)) score += WEIGHTS.brand;
+-    if (tagTokens.includes(term)) score += WEIGHTS.tags;
+-    if (descriptionTokens.includes(term)) score += WEIGHTS.description;
++    const postings = index.get(term);
++    if (postings === undefined) continue;
++    for (const [position, weight] of postings) scores.set(position, (scores.get(position) ?? 0) + weight);
+   }
+-  return score;
++  return scores;
+ }
+ 
+ const bySku = (a, b) => (a.product.sku < b.product.sku ? -1 : a.product.sku > b.product.sku ? 1 : 0);
+@@ -64,14 +98,22 @@ export function searchProducts(products, params) {
+   const terms = tokenize(params.q);
+   const sort = params.sort === 'relevance' && terms.length === 0 ? 'rating' : params.sort;
+ 
++  const passesFilters = (product) => !(
++    (params.category && product.category !== params.category)
++    || (params.minPriceCents !== undefined && product.priceCents < params.minPriceCents)
++    || (params.maxPriceCents !== undefined && product.priceCents > params.maxPriceCents)
++  );
++
+   const matches = [];
+-  for (const product of products) {
+-    if (params.category && product.category !== params.category) continue;
+-    if (params.minPriceCents !== undefined && product.priceCents < params.minPriceCents) continue;
+-    if (params.maxPriceCents !== undefined && product.priceCents > params.maxPriceCents) continue;
+-    const score = terms.length > 0 ? scoreProduct(product, terms) : 0;
+-    if (terms.length > 0 && score === 0) continue;
+-    matches.push({ product, score });
++  if (terms.length > 0) {
++    for (const [position, score] of scoreMatches(searchIndexFor(products), terms)) {
++      const product = products[position];
++      if (passesFilters(product)) matches.push({ product, score });
++    }
++  } else {
++    for (const product of products) {
++      if (passesFilters(product)) matches.push({ product, score: 0 });
++    }
+   }
+ 
+   matches.sort(COMPARATORS[sort]);
+diff --git a/test/search.test.js b/test/search.test.js
+index 4093958..a0f5257 100644
+--- a/test/search.test.js
++++ b/test/search.test.js
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict';
+ import { describe, test } from 'node:test';
+ import { HttpError } from '../src/http/json.js';
+-import { parseSearchParams, searchProducts, tokenize } from '../src/catalog/search.js';
++import { parseSearchParams, searchIndexFor, searchProducts, tokenize } from '../src/catalog/search.js';
+ import { smallSnapshot } from './support/fixtures.js';
+ 
+ const PRODUCTS = [
+@@ -32,6 +32,23 @@ describe('tokenize', () => {
+   });
+ });
+ 
++describe('searchIndexFor', () => {
++  test('indexes a snapshot once and reuses the index', () => {
++    const { products } = smallSnapshot();
++    assert.equal(searchIndexFor(products), searchIndexFor(products));
++  });
++
++  test('builds a fresh index for a newly published snapshot', () => {
++    const products = PRODUCTS.map((product) => ({ ...product }));
++    assert.equal(searchProducts(products, params({ q: 'rice' })).items[0].score, 3.5);
++    const republished = products.map((product) => (product.sku === 'FM-000003' ? { ...product, name: 'Kirana Slow Cooker C300' } : product));
++    assert.notEqual(searchIndexFor(republished), searchIndexFor(products));
++    const result = searchProducts(republished, params({ q: 'rice' }));
++    assert.deepEqual(skus(result), ['FM-000003'], 'the description still mentions rice');
++    assert.equal(result.items[0].score, 0.5);
++  });
++});
++
+ describe('searchProducts', () => {
+   test('scores name > brand > tags > description and breaks ties by rating, then SKU', () => {
+     const result = searchProducts(PRODUCTS, params({ q: 'wireless' }));
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

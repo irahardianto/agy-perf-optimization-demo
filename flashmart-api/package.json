@@ -1,0 +1,22 @@
+{
+  "name": "flashmart-api",
+  "version": "1.4.0",
+  "private": true,
+  "description": "FlashMart storefront API: catalog search, product details and cart pricing.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "setup": "node scripts/seed.mjs",
+    "start": "node src/server.js",
+    "test": "node scripts/test.mjs",
+    "check": "node scripts/check.mjs",
+    "bench": "node bench/run.mjs",
+    "bench:quick": "node bench/run.mjs --quick",
+    "bench:compare": "node bench/compare.mjs",
+    "profile": "node tools/perf/profile.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "reset": "node scripts/reset.mjs"
+  }
+}

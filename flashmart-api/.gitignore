@@ -1,0 +1,9 @@
+node_modules/
+data/
+.profiles/
+bench/results/*.json
+.agentwork/
+*.cpuprofile
+*.heapprofile
+*.tmp
+.DS_Store

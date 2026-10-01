@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.tmp
+*.zip
+flashmart-api/data/
+flashmart-api/.profiles/
+flashmart-api/bench/results/*.json
+flashmart-api/.agentwork/
+flashmart-api/docs/audits/

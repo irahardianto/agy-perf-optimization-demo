@@ -1,0 +1,88 @@
+From 9b36cc334d7289cc09c5c6d17c5e0c4f5367da45 Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:03:23 +0000
+Subject: [PATCH 1/6] perf(catalog): cache the parsed snapshot per file version
+
+What: getSnapshot() parses data/catalog.json once per published file version and
+revalidates with a statSync (inode, size, mtime) on every call.
+Why: the baseline CPU profile showed JSON.parse(readFileSync(catalog.json)) at ~48% of busy
+time (readSnapshot 57% inclusive) and ~40% of all allocations: every request re-read and
+re-parsed the ~8 MB snapshot.
+Impact: removes ~55 ms of CPU and ~8 MB of garbage from every catalog/pricing request; the
+exporter's temp-file + rename is still picked up on the very next request (1 s freshness).
+Measurement: npm run bench -- --label fix1 && npm run bench:compare -- baseline fix1
+---
+ src/catalog/catalog-repository.js | 23 ++++++++++++++++++++---
+ test/catalog-repository.test.js   |  7 +++++++
+ 2 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/src/catalog/catalog-repository.js b/src/catalog/catalog-repository.js
+index 56720fa..4f67285 100644
+--- a/src/catalog/catalog-repository.js
++++ b/src/catalog/catalog-repository.js
+@@ -1,4 +1,4 @@
+-import { readFileSync } from 'node:fs';
++import { readFileSync, statSync } from 'node:fs';
+ 
+ /**
+  * Access to the catalog snapshot (products + promotions).
+@@ -10,8 +10,14 @@ import { readFileSync } from 'node:fs';
+  * @param {{ catalogPath: string, logger: ReturnType<typeof import('../platform/logger.js').createLogger> }} deps
+  */
+ export function createCatalogRepository({ catalogPath, logger }) {
++  // PERF: the baseline CPU profile showed JSON.parse(readFileSync(catalog.json)) at ~48% of
++  // busy time: every request re-read and re-parsed the ~8 MB snapshot. Parse it once per
++  // published file version instead. A statSync (a few microseconds) on every call detects the
++  // exporter's temp-file + rename (new inode, size, mtime), so a new snapshot is served on the
++  // very next request — well within the 1 s freshness requirement.
++  let cached = null;
++
+   function readSnapshot() {
+-    // Always read the file so merchandising updates go live immediately.
+     const snapshot = JSON.parse(readFileSync(catalogPath, 'utf8'));
+     if (!Array.isArray(snapshot.products) || !Array.isArray(snapshot.promotions)) {
+       logger.error('catalog snapshot is malformed', { catalogPath });
+@@ -20,10 +26,21 @@ export function createCatalogRepository({ catalogPath, logger }) {
+     return snapshot;
+   }
+ 
++  /** Identifies the file currently at catalogPath; changes whenever the exporter replaces it. */
++  function fileVersion() {
++    const stats = statSync(catalogPath);
++    return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
++  }
++
+   return {
+     /** @returns {{ version: string, generatedAt: string, products: object[], promotions: object[] }} */
+     getSnapshot() {
+-      return readSnapshot();
++      // Stat before reading: if the file is replaced in between, the next call re-reads it.
++      const version = fileVersion();
++      if (cached === null || cached.version !== version) {
++        cached = { version, snapshot: readSnapshot() };
++      }
++      return cached.snapshot;
+     },
+   };
+ }
+diff --git a/test/catalog-repository.test.js b/test/catalog-repository.test.js
+index 7903232..50cf4a1 100644
+--- a/test/catalog-repository.test.js
++++ b/test/catalog-repository.test.js
+@@ -30,6 +30,13 @@ describe('catalog repository', () => {
+     assert.equal(snapshot.promotions.length, 20);
+   });
+ 
++  test('reuses the parsed snapshot while the file is unchanged', () => {
++    const data = newDataDir();
++    const repository = createCatalogRepository({ catalogPath: data.catalogPath, logger });
++    const first = repository.getSnapshot();
++    assert.equal(repository.getSnapshot(), first, 'an unchanged catalog file should not be re-read and re-parsed');
++  });
++
+   // Requirement: merchandising updates must be visible within one second, without a restart.
+   // The exporter replaces the file atomically (temp file + rename) every few minutes.
+   test('serves each new snapshot within one second of it being published', async () => {
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

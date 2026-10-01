@@ -1,0 +1,77 @@
+{
+  "catalog-load-once": {
+    "target": "src/catalog/catalog-repository.js",
+    "requirement": "1. Catalog freshness",
+    "idea": "Parse the 8 MB snapshot once at first use and keep it forever.",
+    "whyWrong": "New snapshots are never picked up. Prices and promotions go stale until a restart.",
+    "correctFix": "0001 perf(catalog): cache the parsed snapshot per file version (stat on every call)",
+    "expectedFailures": [
+      "serves catalog updates within one second, including in search results",
+      "serves each new snapshot within one second of it being published"
+    ]
+  },
+  "catalog-fs-watch": {
+    "target": "src/catalog/catalog-repository.js",
+    "requirement": "1. Catalog freshness",
+    "idea": "Cache the snapshot and drop it when fs.watch reports a change.",
+    "whyWrong": "The exporter renames a new file over the old one. The watcher stays attached to the old, deleted file, so every update after the first is missed (Linux/macOS).",
+    "correctFix": "0001 perf(catalog): cache the parsed snapshot per file version (stat on every call)",
+    "platformNote": "On Windows fs.watch may follow the path, so this variant can pass the suite there. That is the point: 'works on my machine' caching.",
+    "expectedFailures": [
+      "serves each new snapshot within one second of it being published"
+    ]
+  },
+  "search-index-keyed-by-size": {
+    "target": "src/catalog/search.js",
+    "requirement": "1. Catalog freshness (search results)",
+    "idea": "Build the inverted index once and rebuild it only when the product count changes.",
+    "whyWrong": "A snapshot that renames or replaces products but keeps the same count keeps serving the old index.",
+    "correctFix": "0002 perf(search): build an inverted index once per catalog snapshot (WeakMap keyed by the products array)",
+    "expectedFailures": [
+      "serves catalog updates within one second, including in search results"
+    ]
+  },
+  "auth-cache-by-key-id": {
+    "target": "src/auth/api-key-auth.js",
+    "requirement": "2. API key security (SEC-112)",
+    "idea": "Remember which key ids verified successfully and skip PBKDF2 for them.",
+    "whyWrong": "After one good request, any secret is accepted for that key id.",
+    "correctFix": "0003 perf(auth): cache successful API key verifications (keyed by id + SHA-256 of the secret, status checked every request)",
+    "expectedFailures": [
+      "rejects a wrong secret",
+      "rejects a wrong secret right after the same key id authenticated successfully"
+    ]
+  },
+  "auth-cache-skips-revocation": {
+    "target": "src/auth/api-key-auth.js",
+    "requirement": "2. API key security (SEC-112)",
+    "idea": "Cache the whole authentication result per (key id, secret).",
+    "whyWrong": "A cache hit skips the key status check, so a revoked key keeps working.",
+    "correctFix": "0003 perf(auth): cache successful API key verifications (keyed by id + SHA-256 of the secret, status checked every request)",
+    "expectedFailures": [
+      "revocation takes effect on the very next request",
+      "revokes API keys immediately"
+    ]
+  },
+  "promotions-prefiltered-by-window": {
+    "target": "src/pricing/promotions.js",
+    "requirement": "3. Pricing rules (windows evaluated at request time)",
+    "idea": "Index promotions by SKU and keep only the ones active when the index is built.",
+    "whyWrong": "Flash deals that start or end after the snapshot was loaded are priced wrong until the next export.",
+    "correctFix": "0004 perf(pricing): index promotions by SKU once per catalog snapshot (windows still checked per request)",
+    "expectedFailures": [
+      "evaluates promotion windows at request time, not when the catalog was loaded"
+    ]
+  },
+  "cart-all-calls-parallel": {
+    "target": "src/pricing/cart-pricer.js",
+    "requirement": "3. Pricing rules (only in-stock lines are shipped and charged)",
+    "idea": "Fire the inventory, loyalty and shipping calls all at once with Promise.all.",
+    "whyWrong": "Shipping can't wait for stock, so it is quoted on out-of-stock lines too, and it is requested even when nothing ships.",
+    "correctFix": "0005 perf(pricing): batch stock lookups and fetch the loyalty tier concurrently (shipping still waits for stock)",
+    "expectedFailures": [
+      "charges and ships only the lines that are in stock",
+      "does not request a shipping quote when nothing can be shipped"
+    ]
+  }
+}

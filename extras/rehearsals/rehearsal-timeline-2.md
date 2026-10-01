@@ -1,0 +1,30 @@
+# Rehearsal 2 timeline (time-boxed kickoff A, append-only)
+
+- 08:58:32 Setup start: reading 10 always_on rules + /perf-optimize workflow (rehearsal-run-2)
+- 08:59:11 Phase 0 start: reconnaissance (rules, skill, TS module, dimensions read)
+- 09:00:44 Phase 0 done: Node 22 ESM, no deps; dims A,B,C,D,E active, F skipped (no bundles/Docker/build)
+- 09:00:44 Phase 1 start: profile + baseline bench
+- 09:00:44 profile start: npm run profile -- --label baseline
+- 09:01:16 profile end: rc=0 wall 32 s
+- 09:01:46 bench start: npm run bench -- --label baseline
+- 09:02:32 bench end: baseline rc=0 wall 46 s
+- 09:03:02 Phase 1 done: baseline search 8 req/s p95 1904ms, product 15.2/1439, cart 12/1852, mixed 10/5551; loop p99 988-1886ms; 0/4 on target
+- 09:03:02 Phase 2 start: dispatching 5 analysts (A,B,C,D,E) in parallel
+- 09:04:23 Phase 2 dispatched: 5 parallel analysts (A, B, C, D, E; prompt authoring took ~70 s)
+- 09:10:13 Phase 2: A (CPU) findings ready at 09:10:05 (~5m54s): CRIT snapshot re-parse, CRIT search tokenize, CRIT pbkdf2Sync, HIGH linear scans, MED full sort
+- 09:10:47 Phase 2: B (Memory) findings ready at 09:10:38 (~6m27s): CRIT search garbage 56MB/query, CRIT snapshot 15.3MB/req, CRIT history leak, LOW deep clone, LOW Date allocs
+- 09:11:00 Phase 2: C (I/O) findings ready at 09:10:49 (~6m38s): CRIT sync readFileSync+parse, HIGH sequential getStock, HIGH shipping->loyalty serial, LOW no deadlines
+- 09:12:07 Phase 2: D (Concurrency) findings ready at 09:11:59 (~7m48s): CRIT snapshot loop hog, CRIT pbkdf2Sync cap ~165 req/s, HIGH search loop time, HIGH cart serial awaits, MED no-cluster guardrail (SEC-112 revoke per-process)
+- 09:13:59 Phase 2: E (Serialization) findings ready at 09:12:54 (~8m43s): CRIT snapshot parse, HIGH inverted index 50.4->0.26ms byte-identical on 16 queries, HIGH SKU/promo index, LOW debug log + clone
+- 09:13:59 Phase 3 start: synthesis of 5 findings files (all analysts reported; Phase 2 wall 09:04:11-09:12:54 = 8m43s)
+- 09:17:36 Phase 3 approval gate: report docs/audits/perf-analysis-flashmart-api-2026-09-28-0915.md written (10 findings: 6 CRIT, 3 MED, 1 LOW; 8-step plan); no code changed; waiting for user approval
+- 09:36:01 Phase 4 start: approval received 09:33:50 (scope: fix1 snapshot cache, fix2 search index, fix3 auth cache); loading idiom skill + test/git/security rules
+- 09:38:27 Phase 4 fix-1 (CRIT-001 snapshot cache) start
+- 09:39:44 bench:quick fix-1 start
+- 09:40:06 bench:quick fix-1 end (wall 22 s)
+- 09:41:09 Phase 4 fix-1 committed 440f828
+- 09:41:09 Phase 4 fix-2 (CRIT-002 search index) start
+- 09:43:30 bench:quick fix-2 start
+- 09:43:43 bench:quick fix-2 end (wall 13 s)
+- 09:44:15 Phase 4 fix-2 committed e4cb8e4
+- 09:44:15 Phase 4 fix-3 (CRIT-003 auth verification cache) start

@@ -1,0 +1,508 @@
+{
+  "label": "final",
+  "createdAt": "2026-09-28T08:18:47.377Z",
+  "git": {
+    "commit": "1c3c606",
+    "dirty": false
+  },
+  "environment": {
+    "node": "v22.22.2",
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 8,
+    "cpuModel": "AMD EPYC 7B12",
+    "totalMemGB": 31.3,
+    "catalog": {
+      "products": 12000,
+      "promotions": 300
+    }
+  },
+  "settings": {
+    "connections": 16,
+    "durationSec": 5,
+    "warmupSec": 1,
+    "count": 3
+  },
+  "scenarios": {
+    "search": {
+      "requests": 5609,
+      "errors": 0,
+      "statusCounts": {
+        "200": 5609
+      },
+      "rps": 1121.8,
+      "latencyMs": {
+        "mean": 14.3,
+        "p50": 12.4,
+        "p95": 25.1,
+        "p99": 38.8,
+        "max": 66.4
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 13.9,
+        "p50": 12.44,
+        "p99": 37.72,
+        "max": 48.4
+      },
+      "heapUsedMB": 31.5,
+      "rssMB": 150.5,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 100 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      },
+      "runs": [
+        {
+          "requests": 5607,
+          "errors": 0,
+          "statusCounts": {
+            "200": 5607
+          },
+          "rps": 1121.4,
+          "latencyMs": {
+            "mean": 14.3,
+            "p50": 12.4,
+            "p95": 25.1,
+            "p99": 38.5,
+            "max": 74.9
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 14.97,
+            "p50": 12.57,
+            "p99": 37.22,
+            "max": 438.04
+          },
+          "heapUsedMB": 31.4,
+          "rssMB": 150.1,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 5609,
+          "errors": 0,
+          "statusCounts": {
+            "200": 5609
+          },
+          "rps": 1121.8,
+          "latencyMs": {
+            "mean": 14.3,
+            "p50": 12.4,
+            "p95": 25.1,
+            "p99": 38.8,
+            "max": 66.4
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 13.9,
+            "p50": 12.44,
+            "p99": 37.72,
+            "max": 48.4
+          },
+          "heapUsedMB": 31.5,
+          "rssMB": 150.5,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 6353,
+          "errors": 0,
+          "statusCounts": {
+            "200": 6353
+          },
+          "rps": 1270.6,
+          "latencyMs": {
+            "mean": 12.6,
+            "p50": 11,
+            "p95": 21.9,
+            "p99": 35.3,
+            "max": 60.6
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 13.64,
+            "p50": 11.78,
+            "p99": 38.6,
+            "max": 42.21
+          },
+          "heapUsedMB": 31.5,
+          "rssMB": 151,
+          "requestHistorySize": 1000
+        }
+      ]
+    },
+    "product": {
+      "requests": 17824,
+      "errors": 0,
+      "statusCounts": {
+        "200": 17824
+      },
+      "rps": 3564.8,
+      "latencyMs": {
+        "mean": 4.5,
+        "p50": 3.8,
+        "p95": 8.1,
+        "p99": 13.4,
+        "max": 37.3
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 11.79,
+        "p50": 11.1,
+        "p99": 20.71,
+        "max": 30.9
+      },
+      "heapUsedMB": 34.9,
+      "rssMB": 152.2,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      },
+      "runs": [
+        {
+          "requests": 17824,
+          "errors": 0,
+          "statusCounts": {
+            "200": 17824
+          },
+          "rps": 3564.8,
+          "latencyMs": {
+            "mean": 4.5,
+            "p50": 3.8,
+            "p95": 8.1,
+            "p99": 13.4,
+            "max": 37.3
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 11.79,
+            "p50": 11.1,
+            "p99": 20.71,
+            "max": 30.9
+          },
+          "heapUsedMB": 34.9,
+          "rssMB": 152.2,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 16433,
+          "errors": 0,
+          "statusCounts": {
+            "200": 16433
+          },
+          "rps": 3286.6,
+          "latencyMs": {
+            "mean": 4.9,
+            "p50": 3.9,
+            "p95": 9.7,
+            "p99": 16.3,
+            "max": 39.4
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 11.89,
+            "p50": 11.08,
+            "p99": 22.4,
+            "max": 29.33
+          },
+          "heapUsedMB": 35,
+          "rssMB": 153.8,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 18103,
+          "errors": 0,
+          "statusCounts": {
+            "200": 18103
+          },
+          "rps": 3620.6,
+          "latencyMs": {
+            "mean": 4.4,
+            "p50": 3.7,
+            "p95": 7.7,
+            "p99": 12,
+            "max": 43.6
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 11.69,
+            "p50": 10.99,
+            "p99": 21.73,
+            "max": 33.98
+          },
+          "heapUsedMB": 35,
+          "rssMB": 154.5,
+          "requestHistorySize": 1000
+        }
+      ]
+    },
+    "cart": {
+      "requests": 3429,
+      "errors": 0,
+      "statusCounts": {
+        "200": 3429
+      },
+      "rps": 685.8,
+      "latencyMs": {
+        "mean": 23.3,
+        "p50": 22.9,
+        "p95": 26.5,
+        "p99": 33.3,
+        "max": 42.7
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 10.38,
+        "p50": 10.19,
+        "p99": 14.94,
+        "max": 22.18
+      },
+      "heapUsedMB": 35.8,
+      "rssMB": 158.1,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 150 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      },
+      "runs": [
+        {
+          "requests": 3397,
+          "errors": 0,
+          "statusCounts": {
+            "200": 3397
+          },
+          "rps": 679.4,
+          "latencyMs": {
+            "mean": 23.6,
+            "p50": 23.2,
+            "p95": 26.6,
+            "p99": 36.1,
+            "max": 43
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 10.53,
+            "p50": 10.26,
+            "p99": 17.94,
+            "max": 22.95
+          },
+          "heapUsedMB": 35.8,
+          "rssMB": 156.6,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 3429,
+          "errors": 0,
+          "statusCounts": {
+            "200": 3429
+          },
+          "rps": 685.8,
+          "latencyMs": {
+            "mean": 23.3,
+            "p50": 22.9,
+            "p95": 26.5,
+            "p99": 33.3,
+            "max": 42.7
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 10.38,
+            "p50": 10.19,
+            "p99": 14.94,
+            "max": 22.18
+          },
+          "heapUsedMB": 35.8,
+          "rssMB": 158.1,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 3444,
+          "errors": 0,
+          "statusCounts": {
+            "200": 3444
+          },
+          "rps": 688.8,
+          "latencyMs": {
+            "mean": 23.2,
+            "p50": 22.9,
+            "p95": 26.2,
+            "p99": 33.2,
+            "max": 45.1
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 10.4,
+            "p50": 10.26,
+            "p99": 14.62,
+            "max": 22.69
+          },
+          "heapUsedMB": 35.9,
+          "rssMB": 159.5,
+          "requestHistorySize": 1000
+        }
+      ]
+    },
+    "mixed": {
+      "requests": 8617,
+      "errors": 0,
+      "statusCounts": {
+        "200": 8617
+      },
+      "rps": 1723.4,
+      "latencyMs": {
+        "mean": 9.3,
+        "p50": 4.5,
+        "p95": 29.8,
+        "p99": 37.3,
+        "max": 54.4
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 12.19,
+        "p50": 11.64,
+        "p99": 20.81,
+        "max": 39.68
+      },
+      "heapUsedMB": 35.7,
+      "rssMB": 160.3,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": ">= 250 req/s",
+            "ok": true
+          },
+          {
+            "label": "p95 <= 150 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      },
+      "runs": [
+        {
+          "requests": 8103,
+          "errors": 0,
+          "statusCounts": {
+            "200": 8103
+          },
+          "rps": 1620.6,
+          "latencyMs": {
+            "mean": 9.9,
+            "p50": 4.8,
+            "p95": 31,
+            "p99": 41.6,
+            "max": 92.1
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 12.6,
+            "p50": 11.78,
+            "p99": 22.9,
+            "max": 40.8
+          },
+          "heapUsedMB": 35.6,
+          "rssMB": 160.1,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 8617,
+          "errors": 0,
+          "statusCounts": {
+            "200": 8617
+          },
+          "rps": 1723.4,
+          "latencyMs": {
+            "mean": 9.3,
+            "p50": 4.5,
+            "p95": 29.8,
+            "p99": 37.3,
+            "max": 54.4
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 12.19,
+            "p50": 11.64,
+            "p99": 20.81,
+            "max": 39.68
+          },
+          "heapUsedMB": 35.7,
+          "rssMB": 160.3,
+          "requestHistorySize": 1000
+        },
+        {
+          "requests": 8770,
+          "errors": 0,
+          "statusCounts": {
+            "200": 8770
+          },
+          "rps": 1754,
+          "latencyMs": {
+            "mean": 9.1,
+            "p50": 4.4,
+            "p95": 29.5,
+            "p99": 36.3,
+            "max": 64.8
+          },
+          "effectiveWarmupSec": 1,
+          "eventLoopDelayMs": {
+            "mean": 12.06,
+            "p50": 11.52,
+            "p99": 20.86,
+            "max": 35.85
+          },
+          "heapUsedMB": 35.7,
+          "rssMB": 160.3,
+          "requestHistorySize": 1000
+        }
+      ]
+    }
+  }
+}

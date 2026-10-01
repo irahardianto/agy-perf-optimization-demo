@@ -1,0 +1,200 @@
+{
+  "label": "fix6-history-ring",
+  "createdAt": "2026-09-28T08:17:00.588Z",
+  "git": {
+    "commit": "1c3c606",
+    "dirty": false
+  },
+  "environment": {
+    "node": "v22.22.2",
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 8,
+    "cpuModel": "AMD EPYC 7B12",
+    "totalMemGB": 31.3,
+    "catalog": {
+      "products": 12000,
+      "promotions": 300
+    }
+  },
+  "settings": {
+    "connections": 16,
+    "durationSec": 5,
+    "warmupSec": 1,
+    "count": 1
+  },
+  "scenarios": {
+    "search": {
+      "requests": 5931,
+      "errors": 0,
+      "statusCounts": {
+        "200": 5931
+      },
+      "rps": 1186.2,
+      "latencyMs": {
+        "mean": 13.5,
+        "p50": 11.4,
+        "p95": 23.6,
+        "p99": 41.4,
+        "max": 72.2
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 15.06,
+        "p50": 12.39,
+        "p99": 39.88,
+        "max": 398.46
+      },
+      "heapUsedMB": 31.4,
+      "rssMB": 149.9,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 100 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      }
+    },
+    "product": {
+      "requests": 18128,
+      "errors": 0,
+      "statusCounts": {
+        "200": 18128
+      },
+      "rps": 3625.6,
+      "latencyMs": {
+        "mean": 4.4,
+        "p50": 3.7,
+        "p95": 7.9,
+        "p99": 12.7,
+        "max": 34.7
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 11.85,
+        "p50": 11.19,
+        "p99": 20.2,
+        "max": 56.56
+      },
+      "heapUsedMB": 34.9,
+      "rssMB": 152.6,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      }
+    },
+    "cart": {
+      "requests": 3343,
+      "errors": 0,
+      "statusCounts": {
+        "200": 3343
+      },
+      "rps": 668.6,
+      "latencyMs": {
+        "mean": 23.9,
+        "p50": 23.2,
+        "p95": 28.3,
+        "p99": 39.1,
+        "max": 64.8
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 10.62,
+        "p50": 10.27,
+        "p99": 16.63,
+        "max": 27.93
+      },
+      "heapUsedMB": 35.8,
+      "rssMB": 155.9,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": "p95 <= 150 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      }
+    },
+    "mixed": {
+      "requests": 8384,
+      "errors": 0,
+      "statusCounts": {
+        "200": 8384
+      },
+      "rps": 1676.8,
+      "latencyMs": {
+        "mean": 9.5,
+        "p50": 4.7,
+        "p95": 30.1,
+        "p99": 38.6,
+        "max": 71.7
+      },
+      "effectiveWarmupSec": 1,
+      "eventLoopDelayMs": {
+        "mean": 12.22,
+        "p50": 11.62,
+        "p99": 20.97,
+        "max": 31.82
+      },
+      "heapUsedMB": 35.5,
+      "rssMB": 156.2,
+      "requestHistorySize": 1000,
+      "readiness": {
+        "ok": true,
+        "checks": [
+          {
+            "label": ">= 250 req/s",
+            "ok": true
+          },
+          {
+            "label": "p95 <= 150 ms",
+            "ok": true
+          },
+          {
+            "label": "loop p99 <= 50 ms",
+            "ok": true
+          },
+          {
+            "label": "no errors",
+            "ok": true
+          }
+        ]
+      }
+    }
+  }
+}

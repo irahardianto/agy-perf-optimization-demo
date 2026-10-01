@@ -1,0 +1,168 @@
+From 00107a256903adcf780d249339fb8902b1fd3545 Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:06:27 +0000
+Subject: [PATCH 3/6] perf(auth): cache successful API key verifications
+
+What: a bounded LRU (1,000 entries, 5 min TTL) of successful verifications keyed by key id +
+SHA-256 of the presented secret; PBKDF2 runs once per (key, secret) until the entry expires.
+Why: once the catalog was cached, pbkdf2Sync (~6 ms of blocking CPU per request, 5% of the
+baseline profile) capped the process at ~170 req/s and blocked the event loop.
+Impact: removes ~6 ms of CPU from every authenticated request. SEC-112 unchanged: same KDF and
+parameters, failures never cached, entries dropped when the stored hash changes, and the key
+status is still checked on every request (revocation is immediate).
+Measurement: npm run bench -- --scenario product, compare req/s and loop p99 against fix2
+---
+ src/auth/api-key-auth.js  | 55 +++++++++++++++++++++++++++++++++------
+ test/api-key-auth.test.js | 47 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 93 insertions(+), 9 deletions(-)
+
+diff --git a/src/auth/api-key-auth.js b/src/auth/api-key-auth.js
+index efd8f70..00e372b 100644
+--- a/src/auth/api-key-auth.js
++++ b/src/auth/api-key-auth.js
+@@ -1,4 +1,4 @@
+-import { pbkdf2Sync, timingSafeEqual } from 'node:crypto';
++import { createHash, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
+ 
+ // SEC-112: API key secrets are verified against PBKDF2-HMAC-SHA512 hashes. The digest,
+ // iteration count and key length were set by the security review — do not weaken them
+@@ -7,6 +7,20 @@ const DIGEST = 'sha512';
+ const KEY_LENGTH = 32;
+ const KEY_PATTERN = /^fmk_([a-z0-9]{3,16})\.([A-Za-z0-9]{16,64})$/;
+ 
++// PERF: after the catalog was cached, pbkdf2Sync (~6 ms of blocking CPU per request) capped the
++// whole process at roughly 170 req/s. Successful verifications are now remembered in a small LRU
++// keyed by key id + SHA-256 of the presented secret, so PBKDF2 runs once per (key, secret) until
++// the entry expires. SEC-112 is unchanged: same KDF and parameters, failures are never cached,
++// an entry is only honoured while the stored hash is unchanged (rotation), and the key status is
++// still checked on every request, so revocation takes effect immediately.
++const VERIFIED_CACHE_MAX_ENTRIES = 1_000;
++const VERIFIED_CACHE_TTL_MS = 5 * 60 * 1000;
++
++/** SEC-112 key derivation for a presented secret, using the parameters stored with the record. */
++export function deriveSecretHash(secret, record) {
++  return pbkdf2Sync(secret, Buffer.from(record.salt, 'hex'), record.iterations, KEY_LENGTH, DIGEST);
++}
++
+ /**
+  * Parses an `x-api-key` header value of the form `fmk_<id>.<secret>`.
+  * @param {string | undefined} headerValue
+@@ -19,9 +33,38 @@ export function parseApiKey(headerValue) {
+ 
+ /**
+  * Builds the request authenticator used for every /api/* route.
+- * @param {{ keyStore: ReturnType<typeof import('./api-key-store.js').createApiKeyStore> }} deps
++ * `now` and `deriveKey` are injectable for tests only.
++ * @param {{
++ *   keyStore: ReturnType<typeof import('./api-key-store.js').createApiKeyStore>,
++ *   now?: () => number,
++ *   deriveKey?: typeof deriveSecretHash,
++ * }} deps
+  */
+-export function createApiKeyAuthenticator({ keyStore }) {
++export function createApiKeyAuthenticator({ keyStore, now = Date.now, deriveKey = deriveSecretHash }) {
++  /** cache key -> { hash, expiresAt }; Map iteration order doubles as least-recently-used order. */
++  const verified = new Map();
++
++  function secretMatches(secret, record) {
++    const cacheKey = `${record.id}:${createHash('sha256').update(secret).digest('base64')}`;
++    const time = now();
++    const entry = verified.get(cacheKey);
++    if (entry !== undefined) {
++      verified.delete(cacheKey);
++      if (entry.hash === record.hash && entry.expiresAt > time) {
++        verified.set(cacheKey, entry); // re-insert as most recently used
++        return true;
++      }
++    }
++
++    const expected = Buffer.from(record.hash, 'hex');
++    const derived = deriveKey(secret, record);
++    if (derived.length !== expected.length || !timingSafeEqual(derived, expected)) return false;
++
++    verified.set(cacheKey, { hash: record.hash, expiresAt: time + VERIFIED_CACHE_TTL_MS });
++    if (verified.size > VERIFIED_CACHE_MAX_ENTRIES) verified.delete(verified.keys().next().value);
++    return true;
++  }
++
+   /**
+    * @param {string | undefined} headerValue
+    * @returns {{ ok: true, principal: { keyId: string, name: string, scopes: string[] } } | { ok: false, reason: string }}
+@@ -33,11 +76,7 @@ export function createApiKeyAuthenticator({ keyStore }) {
+     const record = keyStore.get(parsed.id);
+     if (!record) return { ok: false, reason: 'unknown_key' };
+ 
+-    const expected = Buffer.from(record.hash, 'hex');
+-    const derived = pbkdf2Sync(parsed.secret, Buffer.from(record.salt, 'hex'), record.iterations, KEY_LENGTH, DIGEST);
+-    if (derived.length !== expected.length || !timingSafeEqual(derived, expected)) {
+-      return { ok: false, reason: 'invalid_secret' };
+-    }
++    if (!secretMatches(parsed.secret, record)) return { ok: false, reason: 'invalid_secret' };
+     if (record.status !== 'active') return { ok: false, reason: 'revoked_key' };
+ 
+     return { ok: true, principal: { keyId: record.id, name: record.name, scopes: record.scopes } };
+diff --git a/test/api-key-auth.test.js b/test/api-key-auth.test.js
+index 8a2208e..6473be2 100644
+--- a/test/api-key-auth.test.js
++++ b/test/api-key-auth.test.js
+@@ -1,6 +1,6 @@
+ import assert from 'node:assert/strict';
+ import { after, before, describe, test } from 'node:test';
+-import { createApiKeyAuthenticator, parseApiKey } from '../src/auth/api-key-auth.js';
++import { createApiKeyAuthenticator, deriveSecretHash, parseApiKey } from '../src/auth/api-key-auth.js';
+ import { createApiKeyStore } from '../src/auth/api-key-store.js';
+ import { createDataDir, DEMO_KEYS } from './support/fixtures.js';
+ 
+@@ -65,4 +65,49 @@ describe('API key authentication', () => {
+     assert.equal(store.revoke('web01'), true);
+     assert.deepEqual(auth(DEMO_KEYS.storefront), { ok: false, reason: 'revoked_key' });
+   });
++
++  describe('verification cache', () => {
++    const countingAuthenticator = (options = {}) => {
++      const counter = { derivations: 0 };
++      const store = createApiKeyStore({ apiKeysPath: data.apiKeysPath });
++      const auth = createApiKeyAuthenticator({
++        keyStore: store,
++        deriveKey: (...args) => {
++          counter.derivations += 1;
++          return deriveSecretHash(...args);
++        },
++        ...options,
++      });
++      return { auth, store, counter };
++    };
++
++    test('runs PBKDF2 once per key and secret for repeated requests', () => {
++      const { auth, counter } = countingAuthenticator();
++      for (let i = 0; i < 5; i += 1) assert.equal(auth(DEMO_KEYS.storefront).ok, true);
++      assert.equal(counter.derivations, 1);
++    });
++
++    test('never caches a failed verification', () => {
++      const { auth, counter } = countingAuthenticator();
++      assert.equal(auth('fmk_web01.WrongSecret0000000').ok, false);
++      assert.equal(auth('fmk_web01.WrongSecret0000000').ok, false);
++      assert.equal(counter.derivations, 2);
++    });
++
++    test('verifies again after the cached verification expires', () => {
++      let clock = 0;
++      const { auth, counter } = countingAuthenticator({ now: () => clock });
++      assert.equal(auth(DEMO_KEYS.storefront).ok, true);
++      clock += 5 * 60 * 1000 + 1;
++      assert.equal(auth(DEMO_KEYS.storefront).ok, true);
++      assert.equal(counter.derivations, 2);
++    });
++
++    test('does not reuse a verification after the stored hash changes', () => {
++      const { auth, store } = countingAuthenticator();
++      assert.equal(auth(DEMO_KEYS.storefront).ok, true);
++      store.get('web01').hash = '00'.repeat(32); // key rotated in the Identity service
++      assert.deepEqual(auth(DEMO_KEYS.storefront), { ok: false, reason: 'invalid_secret' });
++    });
++  });
+ });
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

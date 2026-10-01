@@ -1,0 +1,134 @@
+From ef0fbe0ee7e646cc5f81260a4e1aaa0fa1ceaa5d Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:13:02 +0000
+Subject: [PATCH 4/6] perf(pricing): index promotions by SKU once per catalog
+ snapshot
+
+What: promotionIndexFor(promotions) maps SKU -> promotions containing it, with startsAt/endsAt
+pre-parsed to epoch ms, cached in a WeakMap keyed by the promotions array. findBestPromotion
+and activePromotionsFor only look at the SKU's candidates.
+Why: every cart line and product page scanned all 300 promotions, parsed two Dates per
+promotion and ran a linear skus.includes over each SKU list (~1 ms of CPU per cart line).
+Impact: promotion lookup becomes proportional to the few promotions a SKU belongs to. The
+index keeps inactive promotions and windows are still evaluated against the request clock
+(flash deals start/end on the minute); 11,040-comparison differential check vs baseline,
+including exact window boundaries, shows identical results.
+Measurement: npm run bench -- --scenario cart,product, compare against fix3
+---
+ src/pricing/promotions.js | 47 ++++++++++++++++++++++++++++++++++-----
+ test/promotions.test.js   | 24 +++++++++++++++++++-
+ 2 files changed, 64 insertions(+), 7 deletions(-)
+
+diff --git a/src/pricing/promotions.js b/src/pricing/promotions.js
+index 4291111..43a659e 100644
+--- a/src/pricing/promotions.js
++++ b/src/pricing/promotions.js
+@@ -8,6 +8,39 @@ export function isActive(promotion, now) {
+   return new Date(promotion.startsAt) <= now && now <= new Date(promotion.endsAt);
+ }
+ 
++// PERF: every cart line and product page scanned all promotions, parsed two Dates per promotion
++// and ran a linear `skus.includes` over each promotion's SKU list (~1 ms per cart line with 300
++// promotions). Promotions are now indexed once per snapshot: SKU -> the promotions that include
++// it, with window bounds pre-parsed to epoch ms. The index deliberately keeps inactive promotions
++// and windows are still evaluated against `now` on every call, because flash deals start and end
++// on the minute. Keyed by the snapshot's promotions array, so a new snapshot gets a fresh index.
++const promotionIndexes = new WeakMap();
++const NO_CANDIDATES = Object.freeze([]);
++
++/**
++ * SKU -> promotions that include it (with pre-parsed window bounds), built once per promotions array.
++ * @param {Promotion[]} promotions
++ * @returns {Map<string, { promotion: Promotion, startsAtMs: number, endsAtMs: number }[]>}
++ */
++export function promotionIndexFor(promotions) {
++  let index = promotionIndexes.get(promotions);
++  if (index === undefined) {
++    index = new Map();
++    for (const promotion of promotions) {
++      const candidate = { promotion, startsAtMs: Date.parse(promotion.startsAt), endsAtMs: Date.parse(promotion.endsAt) };
++      for (const sku of new Set(promotion.skus)) {
++        const candidates = index.get(sku);
++        if (candidates === undefined) index.set(sku, [candidate]);
++        else candidates.push(candidate);
++      }
++    }
++    promotionIndexes.set(promotions, index);
++  }
++  return index;
++}
++
++const activeAt = (candidate, nowMs) => candidate.startsAtMs <= nowMs && nowMs <= candidate.endsAtMs;
++
+ /**
+  * Discount (in cents) that a promotion gives on a line.
+  * `percent` promotions take value% off the line; `fixed` promotions take `value` cents off each unit.
+@@ -29,10 +62,11 @@ export function discountFor(promotion, unitPriceCents, quantity) {
+  * @returns {{ promotion: Promotion, discountCents: number } | null}
+  */
+ export function findBestPromotion(line, promotions, now) {
++  const nowMs = now.getTime();
+   let best = null;
+-  for (const promotion of promotions) {
+-    if (!isActive(promotion, now)) continue;
+-    if (!promotion.skus.includes(line.sku)) continue;
++  for (const candidate of promotionIndexFor(promotions).get(line.sku) ?? NO_CANDIDATES) {
++    if (!activeAt(candidate, nowMs)) continue;
++    const { promotion } = candidate;
+     if (line.quantity < promotion.minQuantity) continue;
+ 
+     const discountCents = discountFor(promotion, line.unitPriceCents, line.quantity);
+@@ -54,8 +88,9 @@ export function findBestPromotion(line, promotions, now) {
+  * @param {Date} now
+  */
+ export function activePromotionsFor(sku, promotions, now) {
+-  return promotions
+-    .filter((promotion) => isActive(promotion, now) && promotion.skus.includes(sku))
+-    .map(({ id, name, type, value, minQuantity, endsAt }) => ({ id, name, type, value, minQuantity, endsAt }))
++  const nowMs = now.getTime();
++  return (promotionIndexFor(promotions).get(sku) ?? NO_CANDIDATES)
++    .filter((candidate) => activeAt(candidate, nowMs))
++    .map(({ promotion: { id, name, type, value, minQuantity, endsAt } }) => ({ id, name, type, value, minQuantity, endsAt }))
+     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+ }
+diff --git a/test/promotions.test.js b/test/promotions.test.js
+index 35c7823..424f696 100644
+--- a/test/promotions.test.js
++++ b/test/promotions.test.js
+@@ -1,6 +1,6 @@
+ import assert from 'node:assert/strict';
+ import { describe, test } from 'node:test';
+-import { activePromotionsFor, discountFor, findBestPromotion, isActive } from '../src/pricing/promotions.js';
++import { activePromotionsFor, discountFor, findBestPromotion, isActive, promotionIndexFor } from '../src/pricing/promotions.js';
+ 
+ const ACTIVE = { startsAt: '2026-01-01T00:00:00.000Z', endsAt: '2030-12-31T23:59:59.000Z' };
+ const promo = (id, fields) => ({ id, name: `Promo ${id}`, type: 'percent', value: 10, minQuantity: 1, ...ACTIVE, skus: ['FM-000001'], ...fields });
+@@ -73,3 +73,25 @@ describe('activePromotionsFor', () => {
+     ]);
+   });
+ });
++
++describe('promotionIndexFor', () => {
++  const FUTURE = { startsAt: '2031-01-01T00:00:00.000Z', endsAt: '2031-12-31T23:59:59.000Z' };
++
++  test('indexes promotions by SKU once per promotions array, keeping not-yet-active ones', () => {
++    const promotions = [promo('PROMO-0001', { skus: ['FM-000001', 'FM-000002', 'FM-000002'] }), promo('PROMO-0002', { skus: ['FM-000002'], ...FUTURE })];
++    const index = promotionIndexFor(promotions);
++    assert.equal(promotionIndexFor(promotions), index);
++    assert.deepEqual(index.get('FM-000002').map((candidate) => candidate.promotion.id), ['PROMO-0001', 'PROMO-0002']);
++    assert.deepEqual(index.get('FM-000001').map((candidate) => candidate.promotion.id), ['PROMO-0001']);
++    assert.equal(index.get('FM-000003'), undefined);
++  });
++
++  test('evaluates promotion windows at call time, not when the index is built', () => {
++    const promotions = [promo('PROMO-0001', { startsAt: '2026-11-11T12:00:00.000Z', endsAt: '2026-11-11T12:59:59.000Z' })];
++    const line = { sku: 'FM-000001', quantity: 1, unitPriceCents: 1_000 };
++    assert.equal(findBestPromotion(line, promotions, new Date('2026-11-11T11:59:59.999Z')), null);
++    assert.equal(findBestPromotion(line, promotions, new Date('2026-11-11T12:00:00.000Z')).promotion.id, 'PROMO-0001');
++    assert.equal(activePromotionsFor('FM-000001', promotions, new Date('2026-11-11T12:59:59.000Z')).length, 1);
++    assert.equal(findBestPromotion(line, promotions, new Date('2026-11-11T13:00:00.000Z')), null);
++  });
++});
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+

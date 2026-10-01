@@ -1,0 +1,108 @@
+From 1c3c6062d4c7bab6438f5aedbc34fcd7b4f9c3ad Mon Sep 17 00:00:00 2001
+From: FlashMart Workshop <workshop@flashmart.example>
+Date: Mon, 28 Sep 2026 08:16:35 +0000
+Subject: [PATCH 6/6] perf(platform): bound the request history with a ring
+ buffer
+
+What: createRequestHistory keeps the most recent 1,000 entries in a fixed-size ring buffer
+(configurable); /internal/requests still serves up to 200, newest first.
+Why: the history was an unbounded array holding every request's headers and body. At
+baseline throughput it was invisible; after the CPU fixes the benchmark's retained heap
+(after forced GC) climbed from 34 MB to 55 MB across one run as the history reached
+~39,000 entries, a leak that grows until the process runs out of memory.
+Impact: retained heap stays flat regardless of traffic; record() and recent() stay O(1)/O(limit).
+Measurement: npm run bench, check that heap MB no longer climbs between scenarios
+---
+ src/platform/request-history.js | 29 ++++++++++++++++++++++++-----
+ test/request-history.test.js    | 19 +++++++++++++++++++
+ 2 files changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/src/platform/request-history.js b/src/platform/request-history.js
+index 37e9624..497ceac 100644
+--- a/src/platform/request-history.js
++++ b/src/platform/request-history.js
+@@ -1,5 +1,8 @@
+ const REDACTED_HEADERS = new Set(['x-api-key', 'x-internal-token', 'authorization', 'cookie']);
+ 
++/** Entries kept in memory. GET /internal/requests serves at most the 200 most recent. */
++export const DEFAULT_HISTORY_CAPACITY = 1_000;
++
+ /** Returns a copy of the request headers with credentials masked. */
+ export function redactHeaders(headers) {
+   const copy = {};
+@@ -12,23 +15,39 @@ export function redactHeaders(headers) {
+ /**
+  * Keeps a history of handled API requests so the support team can inspect what a
+  * client actually sent (GET /internal/requests).
++ * @param {{ capacity?: number }} [options]
+  */
+-export function createRequestHistory() {
+-  const entries = [];
++export function createRequestHistory({ capacity = DEFAULT_HISTORY_CAPACITY } = {}) {
++  // PERF: the history was an unbounded array: every handled request (headers + body) stayed
++  // reachable forever. Invisible at 10 req/s, but once the CPU fixes pushed throughput past
++  // 1,000 req/s the benchmark's retained heap climbed ~20 MB per run and would grow until the
++  // process ran out of memory. A fixed-size ring buffer keeps memory flat; support only ever
++  // reads the most recent 200 entries.
++  if (!Number.isInteger(capacity) || capacity < 1) {
++    throw new RangeError(`capacity must be a positive integer (got ${capacity})`);
++  }
++  const entries = new Array(capacity);
++  let next = 0;
++  let count = 0;
+ 
+   return {
+     /** @param {{ id: string, method: string, path: string, status: number }} entry */
+     record(entry) {
+-      entries.push(entry);
++      entries[next] = entry;
++      next = (next + 1) % capacity;
++      count = Math.min(count + 1, capacity);
+     },
+ 
+     /** Most recent first. */
+     recent(limit = 50) {
+-      return entries.slice(-limit).reverse();
++      const size = Math.min(limit, count);
++      const result = new Array(size);
++      for (let i = 0; i < size; i += 1) result[i] = entries[(next - 1 - i + capacity) % capacity];
++      return result;
+     },
+ 
+     size() {
+-      return entries.length;
++      return count;
+     },
+   };
+ }
+diff --git a/test/request-history.test.js b/test/request-history.test.js
+index 1674ff7..d954515 100644
+--- a/test/request-history.test.js
++++ b/test/request-history.test.js
+@@ -33,4 +33,23 @@ describe('request history', () => {
+     assert.deepEqual(history.recent(), []);
+     assert.equal(history.size(), 0);
+   });
++
++  test('keeps only the most recent entries up to its capacity', () => {
++    const history = createRequestHistory({ capacity: 3 });
++    for (let n = 1; n <= 7; n += 1) history.record(entry(n));
++    assert.equal(history.size(), 3);
++    assert.deepEqual(history.recent(50).map((e) => e.id), ['req-7', 'req-6', 'req-5']);
++    assert.deepEqual(history.recent(2).map((e) => e.id), ['req-7', 'req-6']);
++  });
++
++  test('holds enough entries for the largest /internal/requests page by default', () => {
++    const history = createRequestHistory();
++    for (let n = 1; n <= 250; n += 1) history.record(entry(n));
++    assert.equal(history.recent(200).length, 200);
++    assert.equal(history.recent(200)[0].id, 'req-250');
++  });
++
++  test('rejects an invalid capacity', () => {
++    assert.throws(() => createRequestHistory({ capacity: 0 }), RangeError);
++  });
+ });
+-- 
+2.56.0.rc1.315.gc6ed9934b7-goog
+
